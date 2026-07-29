@@ -4,8 +4,8 @@ import { extname, join, normalize } from 'node:path';
 
 const PORT = Number(process.env.PORT || 3000);
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_GIRL_VOICE_ID = process.env.ELEVENLABS_GIRL_VOICE_ID;
-const ELEVENLABS_BOY_VOICE_ID = process.env.ELEVENLABS_BOY_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
+const ELEVENLABS_GIRL_VOICE_ID = '';
+const ELEVENLABS_BOY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB';
 const ROOT = new URL('.', import.meta.url).pathname;
 const VOICES = {
   girl: ELEVENLABS_GIRL_VOICE_ID,
