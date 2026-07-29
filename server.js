@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const PORT = Number(process.env.PORT || 3000);
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
@@ -35,7 +36,11 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-async function handleTts(req, res) {
+export async function handleTts(req, res) {
+  if (req.method !== 'POST') {
+    json(res, 405, { error: 'Método no permitido.' });
+    return;
+  }
   if (!ELEVENLABS_API_KEY) {
     json(res, 503, { error: 'Falta configurar ELEVENLABS_API_KEY en el servidor.' });
     return;
@@ -95,9 +100,9 @@ async function handleTts(req, res) {
   }
 }
 
-createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (req.method === 'POST' && url.pathname === '/api/tts') {
+  if (url.pathname === '/api/tts') {
     await handleTts(req, res);
     return;
   }
@@ -119,8 +124,20 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[extname(safePath)] || 'application/octet-stream' });
     res.end(file);
   } catch {
-    json(res, 404, { error: 'Archivo no encontrado.' });
+    // La interfaz es una SPA: cualquier ruta GET vuelve al documento principal.
+    try {
+      const index = await readFile(join(ROOT, 'index.html'));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(index);
+    } catch {
+      json(res, 404, { error: 'No se encontró index.html.' });
+    }
   }
-}).listen(PORT, () => {
-  console.log(`Immersia disponible en http://localhost:${PORT}`);
-});
+}
+
+const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMainModule) {
+  createServer(handleRequest).listen(PORT, () => {
+    console.log(`Immersia disponible en http://localhost:${PORT}`);
+  });
+}
