@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Immersia — Aprendizaje por inmersión</title>
+
+<!-- ============ CDN ============ -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand:  { 50:'#eef7ff',100:'#d9edff',300:'#7cc4fb',500:'#1d90f5',600:'#0d74d4',700:'#0b5cab',900:'#0c3a66' },
+          ink:    { 50:'#f7f8fa',100:'#eef0f4',200:'#dde1e8',400:'#8b93a3',500:'#616b7d',700:'#333b4a',900:'#14181f' },
+          accent: { 500:'#f59e0b' },
+          good:   { 500:'#10b981' },
+          bad:    { 500:'#ef4444' },
+        },
+        fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+      }
+    }
+  };
+</script>
+<style>
+  html,body{height:100%;background:#f7f8fa;}
+  .fade-in{animation:fadeIn .25s ease both;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .pulse-rec{animation:pulseRec 1.2s ease-in-out infinite;}
+  @keyframes pulseRec{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.45)}50%{box-shadow:0 0 0 14px rgba(239,68,68,0)}}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-thumb{background:#dde1e8;border-radius:3px}
+  .no-scrollbar::-webkit-scrollbar{display:none}
+</style>
+</head>
+<body class="font-sans text-ink-900">
+
+<div id="app" class="max-w-md mx-auto min-h-screen bg-ink-50 relative pb-24"></div>
+<div id="toast-root" class="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] w-full max-w-xs px-4 space-y-2"></div>
+
+<script>
+/* =====================================================================
+   IMMERSIA · MVP local-first de aprendizaje por inmersión
+   Archivo único HTML — listo para usarse.
+   ===================================================================== */
+
+/* =====================================================================
+   ⚙️ CONFIG — VARIABLES HARDCODEADAS · REEMPLAZAR EN PRODUCCIÓN
+   ===================================================================== */
+const CONFIG = {
+  // 🔴 Backend real (manifiesto de paquetes, sync de contenido)
+  API_BASE_URL:        'https://api.immersia.example.com/v1',        // TODO: URL real
+  MANIFEST_URL:        'https://api.immersia.example.com/v1/manifest',// TODO: URL real
+  CDN_AUDIO_BASE:      'https://cdn.immersia.example.com/audio/',    // TODO: bucket/CDN real
+
+  // Endpoint propio que firma/proxifica la petición. La API key vive solo en el servidor.
+  TTS_PROXY_URL:       '/api/tts',
+  ELEVENLABS_MODEL:    'eleven_multilingual_v2',
+  TTS_OUTPUT_FORMAT:   'mp3_44100_128',
+
+  // 🔴 Transcripción (Whisper / STT)
+  STT_API_URL:         'https://api.openai.com/v1/audio/transcriptions',
+  STT_API_KEY:         'sk_openai_REEMPLAZAR_EN_PRODUCCION',
+  STT_MODEL:           'whisper-1',
+
+  // 🔴 Analítica de métricas de validación (sección 21)
+  ANALYTICS_ENDPOINT:  'https://analytics.immersia.example.com/events',
+  ANALYTICS_KEY:       'anl_REEMPLAZAR_EN_PRODUCCION',
+
+  // Versionado
+  APP_VERSION:         '0.1.0',
+  LCS_SCHEMA_VERSION:  '1.0',
+
+  // ElevenLabs queda activo por defecto. Habilitar solo para una demo sin backend.
+  DEMO_MODE:           false,
+};
+
+/* =====================================================================
+   🗣️ CATÁLOGO NORMALIZADO — Languages / Locales / Voice profiles
+   (en producción llega desde backend; aquí hardcodeado como seed)
+   ===================================================================== */
+const LANGUAGES = [
+  { id:'es', name:'Español', native:'Español' },
+  { id:'en', name:'Inglés',  native:'Inglés'  },
+];
+const LOCALES = [
+  { id:'en-US', languageId:'en', label:'Inglés', flag:'🇺🇸' },
+];
+const VOICE_PROFILES = [
+  // Los IDs reales se configuran únicamente en el .env del servidor.
+  { id:'voice-girl', provider:'elevenlabs', providerVoiceId:'girl', language:'en', locale:'en-US', gender:'female', label:'Chica', status:'active', settings:{stability:0.5,similarity_boost:0.75,style:0.15,use_speaker_boost:true} },
+  { id:'voice-boy',  provider:'elevenlabs', providerVoiceId:'boy',  language:'en', locale:'en-US', gender:'male',   label:'Chico', status:'active', settings:{stability:0.55,similarity_boost:0.75,style:0.1,use_speaker_boost:true} },
+];
+
+const CATEGORIES = [
+  { id:'work',          label:'Trabajo',        icon:'briefcase' },
+  { id:'accommodation', label:'Alojamiento',    icon:'bed-double' },
+  { id:'hospitality',   label:'Hostelería',     icon:'coffee' },
+  { id:'daily',         label:'Vida cotidiana', icon:'sun' },
+  { id:'transport',     label:'Transporte',     icon:'bus' },
+  { id:'health',        label:'Salud',          icon:'heart-pulse' },
+];
+
+/* =====================================================================
+   📦 PAQUETE LCS SEMILLA (hardcodeado; en producción viene del backend)
+   Learning Content Specification v1.0
+   ===================================================================== */
+const SEED_PACKAGE = {
+  id:'pkg-us-first-immersion',
+  schemaVersion:'1.0',
+  version:3,
+  sourceLanguage:'es',
+  targetLanguage:'en',
+  targetLocale:'en-US',
+  title:'Primera inmersión en inglés',
+  description:'Situaciones esenciales para tus primeras semanas: trabajo, alojamiento y vida cotidiana.',
+  status:'published',
+  updatedAt:'2024-05-10T12:00:00Z',
+  minAppVersion:'0.1.0',
+  scenarios:[
+    {
+      id:'sc-first-day', packageId:'pkg-us-first-immersion', category:'work', level:'A2',
+      title:'Tu primer día de trabajo', sortOrder:1, status:'published',
+      description:'Llegás a un café para tu primer turno. La encargada te recibe y te explica el horario.',
+      estimatedMinutes:6,
+      objectives:['Presentarte con naturalidad','Entender tu horario de trabajo','Confirmar información importante'],
+      actors:[
+        { id:'ac-manager', name:'Kate', role:'manager',  voiceRef:'voice-girl', description:'La encargada, amable y directa.' },
+        { id:'ac-you',     name:'Tú',   role:'employee', voiceRef:'voice-boy',  description:'Empleado nuevo.' },
+      ],
+      phrases:[
+        { id:'ph-intro-1', text:"Hi, I'm the new team member. Nice to meet you.", speechText:"Hi, I'm the new team member. Nice to meet you.", translation:'Hola, soy el nuevo miembro del equipo. Encantado de conocerte.', explanation:'Presentación estándar en un contexto laboral informal.', category:'work', locale:'en-US', difficulty:'A2', audioRef:'au-ph-intro-1', tags:['greeting','work'] },
+        { id:'ph-intro-2', text:'What time does my shift start?', speechText:'What time does my shift start?', translation:'¿A qué hora empieza mi turno?', explanation:'“Shift” es la palabra clave para hablar de turnos laborales.', category:'work', locale:'en-US', difficulty:'A2', audioRef:'au-ph-intro-2', tags:['work','time'] },
+        { id:'ph-intro-3', text:'Sorry, could you say that again, please?', speechText:'Sorry, could you say that again, please?', translation:'Perdón, ¿podrías repetir eso, por favor?', explanation:'Frase de supervivencia. Úsala siempre que no entiendas.', category:'daily', locale:'en-US', difficulty:'A1', audioRef:'au-ph-intro-3', tags:['survival'] },
+        { id:'ph-intro-4', text:'Sounds good! See you tomorrow.', speechText:'Sounds good! See you tomorrow.', translation:'¡Perfecto! Nos vemos mañana.', explanation:'“Sounds good” es una forma natural de aceptar una propuesta.', category:'daily', locale:'en-US', difficulty:'A2', audioRef:'au-ph-intro-4', tags:['agreement'] },
+      ],
+      dialogue:[
+        { id:'dl-1', actorId:'ac-manager', text:"Hey! You must be the new starter. I'm Kate, the manager.", speechText:"Hey! You must be the new starter. I'm Kate, the manager.", translation:'¡Hola! Debés ser el nuevo. Soy Kate, la manager.', audioRef:'au-dl-1', sortOrder:1 },
+        { id:'dl-2', actorId:'ac-you', text:"Hi Kate, nice to meet you. I'm really happy to be here.", speechText:"Hi Kate, nice to meet you. I'm really happy to be here.", translation:'Hola Kate, encantado. Estoy muy contento de estar acá.', audioRef:'au-dl-2', sortOrder:2 },
+        { id:'dl-3', actorId:'ac-manager', text:'Your shift starts at 8:30, but come in 15 minutes early on your first day.', speechText:'Your shift starts at eight thirty, but come in fifteen minutes early on your first day.', translation:'Tu turno empieza a las 8:30, pero vení 15 minutos antes tu primer día.', audioRef:'au-dl-3', sortOrder:3, metadata:{intent:'schedule-info'} },
+        { id:'dl-4', actorId:'ac-manager', text:"We'll sort out your uniform and go over the basics. Sound good?", speechText:"We'll sort out your uniform and go over the basics. Sound good?", translation:'Vamos a resolver tu uniforme y repasar lo básico. ¿Te parece bien?', audioRef:'au-dl-4', sortOrder:4 },
+      ],
+      activities:[
+        { id:'act-und-1', type:'choice', sortOrder:1,
+          instructions:'¿A qué hora tenés que llegar tu primer día?',
+          content:{ options:['8:30','8:15','8:45','9:00'] },
+          expected:'8:15',
+          feedback:{ correct:'¡Exacto! El turno empieza 8:30, pero Kate pidió llegar 15 minutos antes: 8:15.', incorrect:'Escuchá de nuevo: “starts at 8:30… come in 15 minutes early”.' } },
+        { id:'act-resp-1', type:'speaking', sortOrder:2,
+          instructions:'Kate te pregunta: “Sound good?”. Respondé confirmando y preguntá qué tenés que traer.',
+          content:{ prompt:'Sound good?', hint:'Ejemplo: “Sounds great! Is there anything I should bring?”' },
+          expected:'open-response',
+          feedback:{ correct:'¡Buena respuesta! Confirmar + preguntar demuestra iniciativa.', incorrect:'' } },
+      ],
+    },
+    {
+      id:'sc-hostel-checkin', packageId:'pkg-us-first-immersion', category:'accommodation', level:'A2',
+      title:'Check-in en un hostel', sortOrder:2, status:'published',
+      description:'Llegás a un hostel después de un vuelo largo. Tenés que registrarte y entender las reglas básicas.',
+      estimatedMinutes:5,
+      objectives:['Hacer check-in con tu reserva','Preguntar por el wifi y la cocina','Entender horarios del hostel'],
+      actors:[
+        { id:'ac-recep', name:'Liam', role:'receptionist', voiceRef:'voice-boy', description:'Recepcionista relajado.' },
+      ],
+      phrases:[
+        { id:'ph-hostel-1', text:'Hi, I have a booking under the name García.', speechText:'Hi, I have a booking under the name Garcia.', translation:'Hola, tengo una reserva a nombre de García.', explanation:'“Under the name” es la forma natural de indicar a nombre de quién está la reserva.', category:'accommodation', locale:'en-US', difficulty:'A2', audioRef:'au-ph-h1', tags:['check-in'] },
+        { id:'ph-hostel-2', text:"What's the wifi password?", speechText:"What's the wifi password?", translation:'¿Cuál es la contraseña del wifi?', explanation:'Probablemente la primera pregunta que vas a hacer en cualquier lugar.', category:'accommodation', locale:'en-US', difficulty:'A1', audioRef:'au-ph-h2', tags:['wifi'] },
+        { id:'ph-hostel-3', text:'What time is checkout?', speechText:'What time is checkout?', translation:'¿A qué hora es el checkout?', explanation:'Pregunta esencial en cualquier alojamiento.', category:'accommodation', locale:'en-US', difficulty:'A1', audioRef:'au-ph-h3', tags:['check-out'] },
+      ],
+      dialogue:[
+        { id:'dl-h1', actorId:'ac-recep', text:'Hi! Welcome. Checking in?', speechText:'Hi! Welcome. Checking in?', translation:'¡Hola! Bienvenido. ¿Vas a registrarte?', audioRef:'au-dl-h1', sortOrder:1 },
+        { id:'dl-h2', actorId:'ac-recep', text:"You're in room 12, second floor. Kitchen closes at 10 pm and checkout is at 10 am.", speechText:"You're in room twelve, second floor. Kitchen closes at ten pee em and checkout is at ten ay em.", translation:'Estás en la habitación 12, segundo piso. La cocina cierra a las 22 y el checkout es a las 10.', audioRef:'au-dl-h2', sortOrder:2 },
+      ],
+      activities:[
+        { id:'act-h-und', type:'choice', sortOrder:1,
+          instructions:'¿A qué hora cierra la cocina?',
+          content:{ options:['10 am','9 pm','10 pm','Midnight'] },
+          expected:'10 pm',
+          feedback:{ correct:'¡Correcto! “Kitchen closes at 10 pm”.', incorrect:'Escuchá de nuevo: “Kitchen closes at ten pm”.' } },
+        { id:'act-h-resp', type:'speaking', sortOrder:2,
+          instructions:'Presentate en la recepción: decí que tenés una reserva y preguntá por el wifi.',
+          content:{ prompt:'Hi! Welcome. Checking in?', hint:'Combiná: “I have a booking under…” + “What’s the wifi password?”' },
+          expected:'open-response',
+          feedback:{ correct:'¡Excelente! Resolviste el check-in completo.', incorrect:'' } },
+      ],
+    },
+    {
+      id:'sc-take-order', packageId:'pkg-us-first-immersion', category:'hospitality', level:'B1',
+      title:'Tomar un pedido en el café', sortOrder:3, status:'published',
+      description:'Ya estás trabajando. Un cliente se acerca al mostrador y tenés que tomar su pedido correctamente.',
+      estimatedMinutes:7,
+      objectives:['Saludar a un cliente','Tomar un pedido con modificaciones','Confirmar el pedido y el pago'],
+      actors:[
+        { id:'ac-cust', name:'Sarah', role:'customer', voiceRef:'voice-girl', description:'Clienta habitual, habla rápido.' },
+      ],
+      phrases:[
+        { id:'ph-ord-1', text:'Hi there! What can I get for you today?', speechText:'Hi there! What can I get for you today?', translation:'¡Hola! ¿Qué te puedo servir hoy?', explanation:'Saludo estándar de atención en una cafetería.', category:'hospitality', locale:'en-US', difficulty:'A2', audioRef:'au-ph-o1', tags:['service'] },
+        { id:'ph-ord-2', text:'Would you like that with whole or skim milk?', speechText:'Would you like that with whole or skim milk?', translation:'¿Lo querés con leche entera o descremada?', explanation:'“Skim milk” significa leche descremada.', category:'hospitality', locale:'en-US', difficulty:'B1', audioRef:'au-ph-o2', tags:['coffee'] },
+        { id:'ph-ord-3', text:'Is that for here or to go?', speechText:'Is that for here or to go?', translation:'¿Es para tomar acá o para llevar?', explanation:'Pregunta habitual al tomar un pedido.', category:'hospitality', locale:'en-US', difficulty:'A2', audioRef:'au-ph-o3', tags:['service'] },
+        { id:'ph-ord-4', text:"That'll be $8.50. Are you paying by card?", speechText:"That'll be eight dollars and fifty cents. Are you paying by card?", translation:'Son $8,50. ¿Pagás con tarjeta?', explanation:'Una forma natural de decir el precio es “eight dollars and fifty cents”.', category:'hospitality', locale:'en-US', difficulty:'B1', audioRef:'au-ph-o4', tags:['payment'] },
+      ],
+      dialogue:[
+        { id:'dl-o1', actorId:'ac-cust', text:"Hey, can I get a large latte with skim milk, please? To go.", speechText:"Hey, can I get a large latte with skim milk, please? To go.", translation:'Hola, ¿me das un latte grande con leche descremada, por favor? Para llevar.', audioRef:'au-dl-o1', sortOrder:1 },
+        { id:'dl-o2', actorId:'ac-cust', text:'Oh, and one of those blueberry muffins as well.', speechText:'Oh, and one of those blueberry muffins as well.', translation:'Ah, y también uno de esos muffins de arándanos.', audioRef:'au-dl-o2', sortOrder:2 },
+      ],
+      activities:[
+        { id:'act-o-und', type:'choice', sortOrder:1,
+          instructions:'¿Qué pidió Sarah exactamente?',
+          content:{ options:['Latte grande, leche entera, para acá','Latte grande, leche descremada, para llevar + muffin','Cappuccino con muffin, para llevar','Latte chico, para llevar'] },
+          expected:'Latte grande, leche descremada, para llevar + muffin',
+          feedback:{ correct:'¡Perfecto! Large latte + skim milk + to go + blueberry muffin.', incorrect:'Repasá: “large latte with skim milk… to go… blueberry muffin”.' } },
+        { id:'act-o-resp', type:'speaking', sortOrder:2,
+          instructions:'Confirmale el pedido a Sarah y decile el total ($12.00). Preguntá cómo paga.',
+          content:{ prompt:'…and one of those blueberry muffins as well.', hint:'“So that’s a large latte with skim milk and a blueberry muffin. That’ll be twelve dollars. Card or cash?”' },
+          expected:'open-response',
+          feedback:{ correct:'¡Gran trabajo! Confirmar el pedido evita errores y suena profesional.', incorrect:'' } },
+      ],
+    },
+    {
+      id:'sc-directions', packageId:'pkg-us-first-immersion', category:'daily', level:'A2',
+      title:'Pedir indicaciones en la calle', sortOrder:4, status:'published',
+      description:'Estás perdido buscando la parada del autobús. Le preguntás a alguien en la calle.',
+      estimatedMinutes:5,
+      objectives:['Pedir ayuda con cortesía','Entender indicaciones básicas','Confirmar que entendiste'],
+      actors:[
+        { id:'ac-local', name:'Persona local', role:'stranger', voiceRef:'voice-boy', description:'Una persona local amable.' },
+      ],
+      phrases:[
+        { id:'ph-dir-1', text:"Excuse me, could you help me? I'm a bit lost.", speechText:"Excuse me, could you help me? I'm a bit lost.", translation:'Disculpá, ¿me podrías ayudar? Estoy un poco perdido.', explanation:'“A bit” suaviza la frase y suena más natural.', category:'daily', locale:'en-US', difficulty:'A2', audioRef:'au-ph-d1', tags:['survival'] },
+        { id:'ph-dir-2', text:'How do I get to the bus stop for the number 2?', speechText:'How do I get to the bus stop for the number two?', translation:'¿Cómo llego a la parada del autobús 2?', explanation:'“How do I get to…” sirve para preguntar por cualquier lugar.', category:'transport', locale:'en-US', difficulty:'A2', audioRef:'au-ph-d2', tags:['transport'] },
+        { id:'ph-dir-3', text:'So, straight ahead and then left at the light?', speechText:'So, straight ahead and then left at the light?', translation:'Entonces, ¿derecho y luego a la izquierda en el semáforo?', explanation:'Repetir la indicación confirma que entendiste.', category:'transport', locale:'en-US', difficulty:'A2', audioRef:'au-ph-d3', tags:['confirm'] },
+      ],
+      dialogue:[
+        { id:'dl-d1', actorId:'ac-local', text:"Yeah, no worries! Go straight ahead for two blocks, then turn left at the lights.", speechText:"Yeah, no worries! Go straight ahead for two blocks, then turn left at the lights.", translation:'¡Sí, sin problema! Seguí derecho dos cuadras y doblá a la izquierda en el semáforo.', audioRef:'au-dl-d1', sortOrder:1 },
+        { id:'dl-d2', actorId:'ac-local', text:"The stop is right outside the convenience store. You can't miss it.", speechText:"The stop is right outside the convenience store. You can't miss it.", translation:'La parada está justo afuera de la tienda. No tiene pérdida.', audioRef:'au-dl-d2', sortOrder:2 },
+      ],
+      activities:[
+        { id:'act-d-und', type:'choice', sortOrder:1,
+          instructions:'¿Dónde está la parada del bus?',
+          content:{ options:['Frente a un supermercado','Afuera de la tienda','En la esquina del semáforo','A tres cuadras a la derecha'] },
+          expected:'Afuera de la tienda',
+          feedback:{ correct:'¡Bien! “Right outside the convenience store”.', incorrect:'Pista: “The stop is right outside the convenience store”.' } },
+        { id:'act-d-resp', type:'speaking', sortOrder:2,
+          instructions:'Confirmá las indicaciones repitiéndolas y agradecé.',
+          content:{ prompt:"…You can't miss it.", hint:'“So, straight ahead for two blocks and left at the lights? Awesome, thanks so much!”' },
+          expected:'open-response',
+          feedback:{ correct:'¡Perfecto! Confirmar indicaciones evita perderte de nuevo.', incorrect:'' } },
+      ],
+    },
+  ],
+};
+
+/* 🔴 Manifiesto remoto simulado (en producción: fetch(CONFIG.MANIFEST_URL)) */
+const REMOTE_MANIFEST = {
+  schemaVersion:'1.0',
+  generatedAt:'2024-05-20T09:00:00Z',
+  packages:[
+    { id:'pkg-us-first-immersion', version:3, title:'Primera inmersión en inglés', targetLocale:'en-US', minAppVersion:'0.1.0', sizeMb:14.2, status:'published' },
+    { id:'pkg-us-hospitality',     version:1, title:'Inglés para hostelería',      targetLocale:'en-US', minAppVersion:'0.1.0', sizeMb:11.8, status:'published' },
+    { id:'pkg-en-interviews',      version:2, title:'Entrevistas laborales en inglés', targetLocale:'en-US', minAppVersion:'0.2.0', sizeMb:9.4, status:'published' },
+  ],
+};
+
+/* =====================================================================
+   💾 PERSISTENCIA LOCAL (localStorage) — separación contenido / personal
+   ===================================================================== */
+const LS = {
+  // Información personal (NO se borra al limpiar caché de contenido)
+  PROFILE:'immersia.profile', ATTEMPTS:'immersia.attempts', RECORDINGS:'immersia.recordings',
+  SAVED:'immersia.savedPhrases', PROGRESS:'immersia.progress', METRICS:'immersia.metrics',
+  SESSION:'immersia.currentSession',
+  // Contenido descargable (puede eliminarse y re-descargarse)
+  PACKAGES:'immersia.packages', AUDIO_CACHE:'immersia.audioAssets',
+};
+const load = (k,d)=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } };
+const save = (k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ toast('Sin espacio suficiente en el dispositivo','alert-triangle','bad'); } };
+
+let state = {
+  profile:   load(LS.PROFILE, null),
+  packages:  load(LS.PACKAGES, {}),          // {pkgId:{...package, downloadedAt}}
+  saved:     load(LS.SAVED, []),             // saved phrases
+  attempts:  load(LS.ATTEMPTS, []),
+  recordings:load(LS.RECORDINGS, []),
+  progress:  load(LS.PROGRESS, { started:[], completed:[], minutes:0, activities:0, categories:{} }),
+  metrics:   load(LS.METRICS, {}),
+  session:   load(LS.SESSION, null),
+  tab:'today',
+  online:navigator.onLine,
+  ob:{ step:0, data:{} },
+  ttsRate:1,
+  audio:{ key:null, status:'idle' },
+};
+// Migra perfiles guardados por versiones anteriores al único par admitido.
+if(state.profile){
+  state.profile.sourceLanguage='es';
+  state.profile.targetLanguage='en';
+  state.profile.targetLocale='en-US';
+  delete state.profile.targetDate;
+  if(!VOICE_PROFILES.some(v=>v.id===state.profile.preferredVoice)){
+    state.profile.preferredVoice='voice-girl';
+  }
+}
+
+function persist(){
+  save(LS.PROFILE,state.profile); save(LS.PACKAGES,state.packages); save(LS.SAVED,state.saved);
+  save(LS.ATTEMPTS,state.attempts); save(LS.RECORDINGS,state.recordings); save(LS.PROGRESS,state.progress);
+  save(LS.METRICS,state.metrics); save(LS.SESSION,state.session);
+}
+
+/* 📊 Métricas de validación (sección 21) — en producción se envían a ANALYTICS_ENDPOINT */
+function track(event){
+  state.metrics[event]=(state.metrics[event]||0)+1; save(LS.METRICS,state.metrics);
+  if(!CONFIG.DEMO_MODE){ /* fetch(CONFIG.ANALYTICS_ENDPOINT,{method:'POST',headers:{'x-api-key':CONFIG.ANALYTICS_KEY},body:JSON.stringify({event,ts:Date.now()})}) */ }
+}
+
+/* =====================================================================
+   🔊 AUDIO — TTS (ElevenLabs mediante backend seguro)
+   ===================================================================== */
+let currentUtterance=null, currentAudio=null, currentTtsController=null, ttsRequestId=0;
+const ttsMemoryCache=new Map();
+const ttsKey=(speechText,voiceRef,opts={})=>JSON.stringify([speechText,voiceRef,!!opts.slow]);
+
+function setAudioState(key,status){
+  state.audio={key,status};
+  render();
+}
+
+function toggleTTSFromButton(payload){
+  const [speechText,voiceRef,opts]=JSON.parse(decodeURIComponent(payload));
+  const key=ttsKey(speechText,voiceRef,opts);
+  if(state.audio.key===key&&state.audio.status==='playing') stopTTS();
+  else playTTS(speechText,voiceRef,opts);
+}
+
+async function playTTS(speechText, voiceRef, opts={}){
+  stopTTS(false);
+  const requestId=++ttsRequestId;
+  const key=ttsKey(speechText,voiceRef,opts);
+  setAudioState(key,'loading');
+  track('audio_played');
+  if(CONFIG.DEMO_MODE){
+    const u=new SpeechSynthesisUtterance(speechText);
+    const vp=VOICE_PROFILES.find(v=>v.id===voiceRef);
+    u.lang = vp ? vp.locale : 'en-US';
+    const voices=speechSynthesis.getVoices();
+    const match=voices.find(v=>v.lang.replace('_','-')===u.lang)||voices.find(v=>v.lang.startsWith(u.lang.split('-')[0]));
+    if(match) u.voice=match;
+    u.rate = opts.slow ? 0.65 : state.ttsRate;
+    u.onstart=()=>{ if(requestId===ttsRequestId) setAudioState(key,'playing'); };
+    u.onend=()=>{ if(requestId===ttsRequestId){ currentUtterance=null; setAudioState(null,'idle'); } };
+    u.onerror=()=>{ if(requestId===ttsRequestId){ currentUtterance=null; setAudioState(null,'idle'); } };
+    currentUtterance=u;
+    speechSynthesis.speak(u);
+  } else {
+    const vp=VOICE_PROFILES.find(v=>v.id===voiceRef) ||
+      VOICE_PROFILES.find(v=>v.id===state.profile?.preferredVoice);
+    if(!vp){
+      setAudioState(null,'idle');
+      toast('No se encontró la voz seleccionada.','volume-x','bad');
+      return;
+    }
+    const cacheKey=JSON.stringify([speechText,vp.id,CONFIG.ELEVENLABS_MODEL,opts.slow]);
+    try{
+      let audioUrl=ttsMemoryCache.get(cacheKey);
+      if(!audioUrl){
+        currentTtsController=new AbortController();
+        const response=await fetch(CONFIG.TTS_PROXY_URL,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          signal:currentTtsController.signal,
+          body:JSON.stringify({
+            text:speechText,
+            voiceId:vp.providerVoiceId,
+            modelId:CONFIG.ELEVENLABS_MODEL,
+            outputFormat:CONFIG.TTS_OUTPUT_FORMAT,
+            voiceSettings:{...vp.settings,speed:opts.slow?0.75:1}
+          })
+        });
+        if(!response.ok){
+          const detail=await response.text();
+          throw new Error(detail||`Error ${response.status}`);
+        }
+        const blob=await response.blob();
+        if(!blob.type.startsWith('audio/')) throw new Error('El servidor no devolvió audio.');
+        audioUrl=URL.createObjectURL(blob);
+        ttsMemoryCache.set(cacheKey,audioUrl);
+      }
+      if(requestId!==ttsRequestId) return;
+      currentTtsController=null;
+      currentAudio=new Audio(audioUrl);
+      currentAudio.onended=()=>{ if(requestId===ttsRequestId){ currentAudio=null; setAudioState(null,'idle'); } };
+      currentAudio.onerror=()=>{ if(requestId===ttsRequestId){ currentAudio=null; setAudioState(null,'idle'); } };
+      await currentAudio.play();
+      setAudioState(key,'playing');
+    }catch(error){
+      currentTtsController=null;
+      if(requestId===ttsRequestId) setAudioState(null,'idle');
+      if(error.name==='AbortError') return;
+      console.error('No se pudo reproducir ElevenLabs:',error);
+      let message='No se pudo generar el audio.';
+      try{
+        const parsed=JSON.parse(error.message);
+        message=parsed.error||message;
+      }catch{}
+      toast(message,'volume-x','bad');
+    }
+  }
+}
+function stopTTS(shouldRender=true){
+  ttsRequestId++;
+  if(currentTtsController){ currentTtsController.abort(); currentTtsController=null; }
+  if('speechSynthesis' in window) speechSynthesis.cancel();
+  if(currentAudio){ currentAudio.pause(); currentAudio.currentTime=0; currentAudio=null; }
+  currentUtterance=null;
+  state.audio={key:null,status:'idle'};
+  if(shouldRender) render();
+}
+
+/* 🎙️ Grabación */
+let mediaRecorder=null, recChunks=[], recTimer=null, recSeconds=0;
+async function startRecording(onTick){
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    recChunks=[]; recSeconds=0;
+    mediaRecorder=new MediaRecorder(stream);
+    mediaRecorder.ondataavailable=e=>recChunks.push(e.data);
+    mediaRecorder.start();
+    recTimer=setInterval(()=>{ recSeconds++; onTick&&onTick(recSeconds); },1000);
+    return true;
+  }catch(e){ return false; } // micrófono bloqueado
+}
+function stopRecording(){
+  return new Promise(res=>{
+    if(!mediaRecorder){ res(null); return; }
+    clearInterval(recTimer);
+    mediaRecorder.onstop=()=>{
+      const blob=new Blob(recChunks,{type:'audio/webm'});
+      mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+      const reader=new FileReader();
+      reader.onload=()=>res({dataUrl:reader.result, duration:recSeconds});
+      reader.readAsDataURL(blob);
+    };
+    mediaRecorder.stop(); mediaRecorder=null;
+  });
+}
+
+/* =====================================================================
+   🧩 HELPERS UI
+   ===================================================================== */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function icons(){ lucide.createIcons(); }
+function toast(msg,icon='info',tone='brand'){
+  const colors={brand:'bg-brand-700',good:'bg-good-500',bad:'bg-bad-500',accent:'bg-accent-500'};
+  const el=document.createElement('div');
+  el.className=`${colors[tone]||colors.brand} text-white text-sm rounded-xl px-4 py-3 shadow-lg flex items-center gap-2 fade-in`;
+  el.innerHTML=`<i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i><span>${esc(msg)}</span>`;
+  $('#toast-root').appendChild(el); icons();
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),320); },2600);
+}
+function chip(txt,cls='bg-ink-100 text-ink-700'){ return `<span class="text-[11px] font-medium px-2 py-0.5 rounded-full ${cls}">${esc(txt)}</span>`; }
+function audioButton(speechText,voiceRef,opts={},config={}){
+  const key=ttsKey(speechText,voiceRef,opts);
+  const active=state.audio.key===key;
+  const loading=active&&state.audio.status==='loading';
+  const playing=active&&state.audio.status==='playing';
+  const payload=encodeURIComponent(JSON.stringify([speechText,voiceRef,opts]));
+  const size=config.size||'w-9 h-9';
+  const iconSize=config.iconSize||'w-4 h-4';
+  const idleClass=config.idleClass||'bg-brand-50 text-brand-600 hover:bg-brand-100';
+  const classes=loading
+    ? 'bg-ink-100 text-ink-400 cursor-wait'
+    : playing
+      ? 'bg-bad-500 text-white shadow-md shadow-bad-500/20 hover:bg-bad-500/90'
+      : idleClass;
+  const icon=loading?'loader-circle':playing?'square':(config.icon||'play');
+  const label=loading?'Cargando audio':playing?'Detener audio':(config.label||'Reproducir audio');
+  return `<button type="button" onclick="toggleTTSFromButton('${payload}')" ${loading?'disabled':''}
+    aria-label="${label}" title="${label}"
+    class="${size} rounded-xl flex items-center justify-center transition-all ${classes}">
+    <i data-lucide="${icon}" class="${iconSize} ${loading?'animate-spin':''}"></i>
+  </button>`;
+}
+const catInfo=id=>CATEGORIES.find(c=>c.id===id)||{label:id,icon:'tag'};
+const localeInfo=id=>LOCALES.find(l=>l.id===id)||{label:id,flag:'🌐'};
+const isPhraseSaved=id=>state.saved.some(p=>p.phraseId===id);
+function allScenarios(){ return Object.values(state.packages).flatMap(p=>p.scenarios.map(s=>({...s,pkgTitle:p.title}))); }
+function findScenario(id){ return allScenarios().find(s=>s.id===id); }
+
+function offlineBanner(){
+  return state.online?'' :
+  `<div class="bg-ink-900 text-white text-xs px-4 py-2 flex items-center gap-2 sticky top-0 z-40">
+     <i data-lucide="wifi-off" class="w-3.5 h-3.5"></i>
+     Sin conexión — usando contenido descargado. Todo tu progreso se guarda localmente.
+   </div>`;
+}
+
+/* =====================================================================
+   🚀 ROOT RENDER
+   ===================================================================== */
+function render(){
+  const app=$('#app');
+  if(!state.profile){ app.innerHTML=renderOnboarding(); icons(); return; }
+  if(state.session){ app.innerHTML=offlineBanner()+renderSession(); icons(); return; }
+  const views={today:renderToday,practice:renderPractice,phrases:renderPhrases,progress:renderProgress,settings:renderSettings};
+  app.innerHTML=offlineBanner()+views[state.tab]()+renderNav();
+  icons();
+}
+function nav(tab){ state.tab=tab; render(); }
+
+function renderNav(){
+  const items=[
+    {id:'today',icon:'calendar-check',label:'Hoy'},
+    {id:'practice',icon:'map',label:'Práctica'},
+    {id:'phrases',icon:'bookmark',label:'Frases'},
+    {id:'progress',icon:'trending-up',label:'Progreso'},
+    {id:'settings',icon:'settings',label:'Ajustes'},
+  ];
+  return `<nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-ink-200 flex z-50" style="padding-bottom:env(safe-area-inset-bottom)">
+    ${items.map(i=>`
+      <button onclick="nav('${i.id}')" class="flex-1 py-2.5 flex flex-col items-center gap-0.5 ${state.tab===i.id?'text-brand-600':'text-ink-400'}">
+        <i data-lucide="${i.icon}" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">${i.label}</span>
+      </button>`).join('')}
+  </nav>`;
+}
+
+function header(title,sub=''){
+  const loc=localeInfo(state.profile.targetLocale);
+  return `<header class="px-5 pt-8 pb-4">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">${esc(title)}</h1>
+        ${sub?`<p class="text-sm text-ink-500 mt-0.5">${esc(sub)}</p>`:''}
+      </div>
+      <div class="flex items-center gap-1.5 bg-white border border-ink-200 rounded-full px-3 py-1.5 text-xs font-medium mt-1">
+        <span>${loc.flag}</span><span>Inglés</span>
+      </div>
+    </div>
+  </header>`;
+}
+
+/* =====================================================================
+   1️⃣ ONBOARDING
+   ===================================================================== */
+function renderOnboarding(){
+  const ob=state.ob, d=ob.data;
+  const steps=['welcome','languages','voice','level','goal','plan','categories','done'];
+  const step=steps[ob.step];
+  const progress=Math.round(ob.step/(steps.length-1)*100);
+  let body='';
+
+  if(step==='welcome'){
+    body=`
+    <div class="flex flex-col items-center text-center pt-16 px-8 fade-in">
+      <div class="w-20 h-20 rounded-3xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30 mb-6">
+        <i data-lucide="languages" class="w-10 h-10 text-white"></i>
+      </div>
+      <h1 class="text-3xl font-bold tracking-tight">Immersia</h1>
+      <p class="text-ink-500 mt-3 leading-relaxed">Aprendé idiomas con situaciones reales.<br>Sesiones cortas. Todo funciona sin conexión.</p>
+      <div class="mt-8 space-y-3 w-full">
+        ${[['map-pin','Situaciones reales, no lecciones'],['mic','Hablá desde el primer día'],['wifi-off','Tu progreso vive en tu dispositivo']].map(([i,t])=>`
+        <div class="flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-ink-100 text-left">
+          <i data-lucide="${i}" class="w-5 h-5 text-brand-500 shrink-0"></i><span class="text-sm font-medium">${t}</span>
+        </div>`).join('')}
+      </div>
+      <button onclick="obNext()" class="mt-10 w-full bg-brand-600 hover:bg-brand-700 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2">
+        Empezar <i data-lucide="arrow-right" class="w-4 h-4"></i>
+      </button>
+    </div>`;
+  }
+
+  if(step==='languages'){
+    d.sourceLanguage='es';
+    d.targetLanguage='en';
+    d.targetLocale='en-US';
+    body=obShell('¿Qué idiomas usamos?','Esta versión enseña un único inglés, basado en el uso de Estados Unidos.',`
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Tu idioma (traducciones y explicaciones)</p>
+      <div class="grid grid-cols-2 gap-2 mb-6">
+        ${obLanguageCard('Español',true)}
+        ${obLanguageCard('Inglés')}
+        ${obLanguageCard('Portugués')}
+        ${obLanguageCard('Francés')}
+      </div>
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Idioma que querés aprender</p>
+      <div class="grid grid-cols-2 gap-2">
+        ${obLanguageCard('Inglés',true)}
+        ${obLanguageCard('Portugués')}
+        ${obLanguageCard('Francés')}
+        ${obLanguageCard('Alemán')}
+      </div>
+    `, d.sourceLanguage&&d.targetLanguage);
+  }
+
+  if(step==='voice'){
+    body=obShell('Elegí la voz de práctica','Ambas opciones usan ElevenLabs y enseñan el mismo inglés.',`
+      <div class="grid grid-cols-2 gap-3">
+        ${VOICE_PROFILES.map(v=>obCard(`obSet('preferredVoice','${v.id}')`, d.preferredVoice===v.id, `
+          <i data-lucide="${v.gender==='female'?'user-round':'user'}" class="w-6 h-6 text-brand-500 mb-3"></i>
+          <p class="font-semibold text-sm">${v.label}</p>
+          <p class="text-xs text-ink-400 mt-1">Voz de ElevenLabs</p>`)).join('')}
+      </div>
+      ${d.preferredVoice?`<div class="mt-4 flex items-center gap-2">${audioButton('Hello! This is how I sound.',d.preferredVoice,{},{
+        size:'w-10 h-10',iconSize:'w-4 h-4',label:'Probar voz'
+      })}<span class="text-sm font-semibold ${state.audio.status==='playing'?'text-bad-500':'text-brand-600'}">${state.audio.status==='loading'?'Preparando voz…':state.audio.status==='playing'?'Detener voz':'Probar voz'}</span></div>`:''}
+    `, !!d.preferredVoice);
+  }
+
+  if(step==='level'){
+    const levels=[['A1','Principiante','Palabras y frases muy básicas'],['A2','Básico','Puedo sobrevivir con esfuerzo'],['B1','Intermedio','Me defiendo en conversaciones simples'],['B2','Avanzado','Converso con bastante fluidez']];
+    body=obShell('¿Cuál es tu nivel aproximado?','No es un examen, solo para calibrar el contenido.',`
+      <div class="space-y-2">
+        ${levels.map(([id,t,s])=>obCard(`obSet('level','${id}')`, d.level===id, `
+          <div class="flex items-center gap-3">
+            <span class="w-10 h-10 rounded-xl bg-brand-50 text-brand-700 font-bold text-sm flex items-center justify-center">${id}</span>
+            <div><p class="font-semibold text-sm">${t}</p><p class="text-xs text-ink-400">${s}</p></div>
+          </div>`)).join('')}
+      </div>`, !!d.level);
+  }
+
+  if(step==='goal'){
+    const goals=[['first-immersion','plane','Primera inmersión en otro país'],['work','briefcase','Conseguir o mejorar en un trabajo'],['study','graduation-cap','Estudiar en el extranjero'],['travel','backpack','Viajar con confianza']];
+    body=obShell('¿Cuál es tu objetivo principal?','',`
+      <div class="space-y-2">
+        ${goals.map(([id,ic,t])=>obCard(`obSet('goal','${id}')`, d.goal===id, `
+          <div class="flex items-center gap-3"><i data-lucide="${ic}" class="w-5 h-5 text-brand-500"></i><p class="font-semibold text-sm">${t}</p></div>`)).join('')}
+      </div>
+      `, !!d.goal);
+  }
+
+  if(step==='plan'){
+    const times=[['5','5 min','Micro-sesiones'],['10','10 min','Recomendado'],['20','20 min','Ritmo intenso'],['30','30+ min','Inmersión completa']];
+    body=obShell('¿Cuánto tiempo tenés por día?','',`
+      <div class="grid grid-cols-2 gap-2">
+        ${times.map(([id,t,s])=>obCard(`obSet('dailyMinutes','${id}')`, d.dailyMinutes===id, `
+          <p class="font-bold text-lg">${t}</p><p class="text-xs text-ink-400">${s}</p>`)).join('')}
+      </div>`, !!d.dailyMinutes);
+  }
+
+  if(step==='categories'){
+    d.priorities=d.priorities||[];
+    body=obShell('¿Qué situaciones priorizamos?','Elegí al menos una. Podés cambiarlo después.',`
+      <div class="grid grid-cols-2 gap-2">
+        ${CATEGORIES.map(c=>obCard(`obToggleCat('${c.id}')`, d.priorities.includes(c.id), `
+          <i data-lucide="${c.icon}" class="w-5 h-5 ${d.priorities.includes(c.id)?'text-brand-600':'text-ink-400'} mb-1.5"></i>
+          <p class="font-semibold text-sm">${c.label}</p>`)).join('')}
+      </div>`, d.priorities.length>0);
+  }
+
+  if(step==='done'){
+    const loc=localeInfo(d.targetLocale);
+    body=`
+    <div class="flex flex-col items-center text-center pt-16 px-8 fade-in">
+      <div class="w-20 h-20 rounded-full bg-good-500/10 flex items-center justify-center mb-6">
+        <i data-lucide="check-circle-2" class="w-10 h-10 text-good-500"></i>
+      </div>
+      <h2 class="text-2xl font-bold">¡Todo listo!</h2>
+      <p class="text-ink-500 mt-2 text-sm leading-relaxed">Tu plan: <b>${loc.flag} ${esc(loc.label)}</b>, nivel <b>${esc(d.level)}</b>, ${esc(d.dailyMinutes)} min/día.</p>
+      <div class="mt-6 w-full bg-white rounded-2xl border border-ink-100 p-4 text-left">
+        <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2 flex items-center gap-1.5"><i data-lucide="package" class="w-3.5 h-3.5"></i> Paquete recomendado</p>
+        <p class="font-semibold text-sm">${esc(SEED_PACKAGE.title)}</p>
+        <p class="text-xs text-ink-400 mt-1">${esc(SEED_PACKAGE.description)}</p>
+        <div class="flex gap-1.5 mt-2">${chip('v'+SEED_PACKAGE.version)}${chip('Inglés','bg-brand-50 text-brand-700')}${chip('4 escenarios')}</div>
+      </div>
+      <button onclick="obFinish()" class="mt-8 w-full bg-brand-600 hover:bg-brand-700 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2">
+        <i data-lucide="download" class="w-4 h-4"></i> Descargar paquete y empezar
+      </button>
+      <button onclick="obFinish(false)" class="mt-3 text-sm text-ink-400 font-medium">Empezar sin descargar</button>
+    </div>`;
+  }
+
+  return `<div class="min-h-screen pb-10">
+    ${ob.step>0&&ob.step<steps.length-1?`
+      <div class="px-5 pt-6 flex items-center gap-3">
+        <button onclick="obBack()" class="w-9 h-9 rounded-full bg-white border border-ink-200 flex items-center justify-center"><i data-lucide="arrow-left" class="w-4 h-4"></i></button>
+        <div class="flex-1 h-1.5 bg-ink-100 rounded-full overflow-hidden"><div class="h-full bg-brand-500 rounded-full transition-all" style="width:${progress}%"></div></div>
+      </div>`:''}
+    ${body}
+  </div>`;
+}
+function obShell(title,sub,inner,canNext){
+  return `<div class="px-5 pt-6 fade-in">
+    <h2 class="text-xl font-bold">${esc(title)}</h2>
+    ${sub?`<p class="text-sm text-ink-500 mt-1">${esc(sub)}</p>`:''}
+    <div class="mt-5">${inner}</div>
+    <button onclick="obNext()" ${canNext?'':'disabled'} class="mt-8 w-full py-4 rounded-2xl font-semibold flex items-center justify-center gap-2 ${canNext?'bg-brand-600 hover:bg-brand-700 text-white':'bg-ink-100 text-ink-400 cursor-not-allowed'}">
+      Continuar <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>`;
+}
+function obCard(onclick,active,inner,extra=''){
+  return `<button onclick="${onclick}" class="w-full text-left bg-white rounded-2xl p-4 border-2 transition-all ${active?'border-brand-500 ring-2 ring-brand-500/15':'border-ink-100 hover:border-ink-200'} ${extra}">${inner}</button>`;
+}
+function obLanguageCard(label,active=false){
+  return `<button type="button" ${active?'':'disabled'} class="w-full text-left rounded-2xl p-4 border-2 ${
+    active
+      ? 'bg-white border-brand-500 ring-2 ring-brand-500/15'
+      : 'bg-ink-100/70 border-ink-100 text-ink-400 cursor-not-allowed'
+  }">
+    <div class="flex items-center justify-between gap-2">
+      <p class="font-semibold text-sm">${label}</p>
+      ${active?'<i data-lucide="check" class="w-4 h-4 text-brand-600"></i>':'<span class="text-[10px] font-bold uppercase tracking-wide bg-white text-ink-400 border border-ink-200 px-2 py-1 rounded-full">Pronto</span>'}
+    </div>
+  </button>`;
+}
+function obSet(k,v){ state.ob.data[k]=v; render(); }
+function obToggleCat(id){ const p=state.ob.data.priorities; const i=p.indexOf(id); i>=0?p.splice(i,1):p.push(id); render(); }
+function obNext(){ state.ob.step++; render(); }
+function obBack(){ state.ob.step--; render(); }
+function obFinish(download=true){
+  const d=state.ob.data;
+  state.profile={ sourceLanguage:'es', targetLanguage:'en', targetLocale:'en-US',
+    level:d.level, goal:d.goal, dailyMinutes:+d.dailyMinutes,
+    priorities:d.priorities, preferredVoice:d.preferredVoice||'voice-girl',
+    createdAt:new Date().toISOString() };
+  persist();
+  if(download) downloadPackage(SEED_PACKAGE.id);
+  else { state.tab='today'; render(); }
+}
+
+/* =====================================================================
+   📥 DESCARGA / ACTUALIZACIÓN DE PAQUETES
+   ===================================================================== */
+function downloadPackage(pkgId){
+  // 🔴 PRODUCCIÓN: fetch(`${CONFIG.API_BASE_URL}/packages/${pkgId}`) + descarga de audio assets desde CONFIG.CDN_AUDIO_BASE
+  const app=$('#app');
+  app.innerHTML=`<div class="min-h-screen flex flex-col items-center justify-center px-8 text-center fade-in">
+    <div class="w-16 h-16 rounded-2xl bg-brand-50 flex items-center justify-center mb-5"><i data-lucide="download-cloud" class="w-8 h-8 text-brand-500"></i></div>
+    <h2 class="font-bold text-lg">Descargando paquete…</h2>
+    <p class="text-sm text-ink-500 mt-1">Contenido y audios para usar sin conexión</p>
+    <div class="w-full max-w-xs h-2 bg-ink-100 rounded-full mt-6 overflow-hidden"><div id="dl-bar" class="h-full bg-brand-500 rounded-full transition-all duration-200" style="width:0%"></div></div>
+    <p id="dl-pct" class="text-xs text-ink-400 mt-2">0%</p>
+  </div>`; icons();
+  let p=0;
+  const t=setInterval(()=>{
+    p=Math.min(100,p+Math.random()*22);
+    $('#dl-bar').style.width=p+'%'; $('#dl-pct').textContent=Math.round(p)+'%';
+    if(p>=100){
+      clearInterval(t);
+      if(pkgId===SEED_PACKAGE.id){
+        state.packages[pkgId]={...SEED_PACKAGE, downloadedAt:new Date().toISOString()};
+      } else {
+        const m=REMOTE_MANIFEST.packages.find(x=>x.id===pkgId);
+        state.packages[pkgId]={...m, schemaVersion:'1.0', description:'Paquete adicional (contenido de ejemplo).', scenarios:[], downloadedAt:new Date().toISOString()};
+      }
+      track('package_downloaded'); persist();
+      state.tab='today'; toast('Paquete descargado y disponible sin conexión','check-circle-2','good'); render();
+    }
+  },180);
+}
+function deletePackage(pkgId){
+  delete state.packages[pkgId]; persist();
+  toast('Contenido eliminado. Tu progreso y grabaciones se conservan.','trash-2'); render();
+}
+function checkUpdates(){
+  // 🔴 PRODUCCIÓN: fetch(CONFIG.MANIFEST_URL) → comparar versiones → descargar deltas
+  if(!state.online){ toast('Sin conexión: se mantiene el contenido actual','wifi-off','accent'); return; }
+  let updates=0;
+  REMOTE_MANIFEST.packages.forEach(rm=>{
+    const local=state.packages[rm.id];
+    if(local && rm.version>local.version) updates++;
+  });
+  toast(updates?`${updates} actualización(es) disponible(s)`:'Todo el contenido está actualizado','refresh-cw', updates?'accent':'good');
+  render();
+}
+
+/* =====================================================================
+   2️⃣ TODAY
+   ===================================================================== */
+function renderToday(){
+  const scenarios=allScenarios();
+  const done=state.progress.completed, started=state.progress.started;
+  const incomplete=scenarios.filter(s=>started.includes(s.id)&&!done.includes(s.id));
+  const rec=scenarios.find(s=>!done.includes(s.id)&&state.profile.priorities.includes(s.category))||scenarios.find(s=>!done.includes(s.id))||scenarios[0];
+  const reviewsDue=state.saved.filter(p=>new Date(p.nextReview)<=new Date());
+  return header('Hoy','Tu práctica de hoy')+`
+  <div class="px-5 space-y-5 fade-in">
+    ${Object.keys(state.packages).length===0?`
+    <div class="bg-white rounded-2xl border border-dashed border-ink-200 p-6 text-center">
+      <i data-lucide="package-open" class="w-8 h-8 text-ink-300 mx-auto mb-3"></i>
+      <p class="font-semibold text-sm">Sin contenido descargado</p>
+      <p class="text-xs text-ink-400 mt-1 mb-4">Descargá un paquete para practicar, incluso sin conexión.</p>
+      <button onclick="downloadPackage('${SEED_PACKAGE.id}')" class="bg-brand-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl">Descargar “${esc(SEED_PACKAGE.title)}”</button>
+    </div>`:`
+
+    <div>
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Sesión recomendada</p>
+      ${rec?scenarioHero(rec):''}
+    </div>
+
+    ${incomplete.length?`
+    <div>
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Sesiones incompletas</p>
+      <div class="space-y-2">${incomplete.map(s=>scenarioRow(s,'history')).join('')}</div>
+    </div>`:''}
+
+    <div>
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Repasos pendientes</p>
+      ${reviewsDue.length?`
+        <button onclick="nav('phrases')" class="w-full bg-white rounded-2xl border border-ink-100 p-4 flex items-center gap-3 text-left">
+          <div class="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center"><i data-lucide="repeat" class="w-5 h-5 text-accent-500"></i></div>
+          <div class="flex-1"><p class="font-semibold text-sm">${reviewsDue.length} frase${reviewsDue.length>1?'s':''} para repasar</p><p class="text-xs text-ink-400">Repaso rápido de tu banco de frases</p></div>
+          <i data-lucide="chevron-right" class="w-4 h-4 text-ink-300"></i>
+        </button>`:`
+        <div class="bg-white rounded-2xl border border-ink-100 p-4 flex items-center gap-3">
+          <i data-lucide="check-circle-2" class="w-5 h-5 text-good-500"></i>
+          <p class="text-sm text-ink-500">Sin repasos pendientes por ahora.</p>
+        </div>`}
+    </div>`}
+  </div>`;
+}
+function scenarioHero(s){
+  const c=catInfo(s.category);
+  return `<button onclick="startSession('${s.id}')" class="w-full text-left bg-gradient-to-br from-brand-600 to-brand-700 text-white rounded-3xl p-5 shadow-lg shadow-brand-600/25 relative overflow-hidden">
+    <div class="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full"></div>
+    <div class="flex gap-1.5 mb-3">${chip(c.label,'bg-white/20 text-white')}${chip(s.level,'bg-white/20 text-white')}${chip(s.estimatedMinutes+' min','bg-white/20 text-white')}</div>
+    <h3 class="font-bold text-lg leading-snug">${esc(s.title)}</h3>
+    <p class="text-sm text-brand-100 mt-1.5 leading-relaxed">${esc(s.description)}</p>
+    <div class="mt-4 inline-flex items-center gap-2 bg-white text-brand-700 text-sm font-semibold px-4 py-2 rounded-xl">
+      <i data-lucide="play" class="w-4 h-4"></i> Empezar sesión
+    </div>
+  </button>`;
+}
+function scenarioRow(s,icon='play-circle'){
+  const c=catInfo(s.category); const done=state.progress.completed.includes(s.id);
+  return `<button onclick="startSession('${s.id}')" class="w-full bg-white rounded-2xl border border-ink-100 p-4 flex items-center gap-3 text-left">
+    <div class="w-10 h-10 rounded-xl ${done?'bg-good-500/10':'bg-brand-50'} flex items-center justify-center shrink-0">
+      <i data-lucide="${done?'check':c.icon}" class="w-5 h-5 ${done?'text-good-500':'text-brand-600'}"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <p class="font-semibold text-sm truncate">${esc(s.title)}</p>
+      <p class="text-xs text-ink-400">${c.label} · ${s.level} · ${s.estimatedMinutes} min ${done?'· completado':''}</p>
+    </div>
+    <i data-lucide="chevron-right" class="w-4 h-4 text-ink-300 shrink-0"></i>
+  </button>`;
+}
+
+/* =====================================================================
+   3️⃣ PRACTICE
+   ===================================================================== */
+let practiceFilter='all';
+function setPracticeFilter(f){ practiceFilter=f; render(); }
+function renderPractice(){
+  let scenarios=allScenarios();
+  if(practiceFilter!=='all') scenarios=scenarios.filter(s=>s.category===practiceFilter);
+  return header('Práctica','Explorá situaciones reales')+`
+  <div class="px-5 fade-in">
+    <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-5 px-5">
+      <button onclick="setPracticeFilter('all')" class="shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold ${practiceFilter==='all'?'bg-ink-900 text-white':'bg-white border border-ink-200 text-ink-500'}">Todas</button>
+      ${CATEGORIES.map(c=>`
+      <button onclick="setPracticeFilter('${c.id}')" class="shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 ${practiceFilter===c.id?'bg-ink-900 text-white':'bg-white border border-ink-200 text-ink-500'}">
+        <i data-lucide="${c.icon}" class="w-3.5 h-3.5"></i>${c.label}</button>`).join('')}
+    </div>
+    <div class="mt-4 space-y-2">
+      ${scenarios.length?scenarios.map(s=>`
+        <div class="bg-white rounded-2xl border border-ink-100 p-4">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex-1">
+              <div class="flex gap-1.5 mb-1.5">${chip(catInfo(s.category).label)}${chip(s.level,'bg-brand-50 text-brand-700')}
+                ${chip('sin conexión ✓','bg-good-500/10 text-good-500')}</div>
+              <p class="font-semibold text-sm">${esc(s.title)}</p>
+              <p class="text-xs text-ink-400 mt-1 leading-relaxed">${esc(s.description)}</p>
+            </div>
+          </div>
+          <div class="flex items-center justify-between mt-3">
+            <span class="text-xs text-ink-400 flex items-center gap-1"><i data-lucide="clock" class="w-3.5 h-3.5"></i>${s.estimatedMinutes} min</span>
+            <button onclick="startSession('${s.id}')" class="bg-brand-600 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+              <i data-lucide="play" class="w-3.5 h-3.5"></i>${state.progress.completed.includes(s.id)?'Repetir':'Empezar'}
+            </button>
+          </div>
+        </div>`).join(''):`
+        <div class="text-center py-12 text-ink-400 text-sm">
+          <i data-lucide="search-x" class="w-8 h-8 mx-auto mb-2 text-ink-300"></i>
+          No hay escenarios descargados en esta categoría.
+        </div>`}
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   4️⃣ PHRASES — Phrase Bank
+   ===================================================================== */
+function toggleSavePhrase(phraseId, scenarioId){
+  const i=state.saved.findIndex(p=>p.phraseId===phraseId);
+  if(i>=0){ state.saved.splice(i,1); toast('Frase quitada de tu banco','bookmark-minus'); }
+  else{
+    state.saved.push({ phraseId, scenarioId, savedAt:new Date().toISOString(),
+      reviewState:'new', nextReview:new Date(Date.now()+86400000).toISOString(), notes:'' });
+    track('phrase_saved'); toast('Frase guardada en tu banco de frases','bookmark-check','good');
+  }
+  persist(); render();
+}
+function findPhrase(id){
+  for(const p of Object.values(state.packages)) for(const s of (p.scenarios||[])){
+    const ph=(s.phrases||[]).find(x=>x.id===id); if(ph) return {phrase:ph, scenario:s};
+  } return null;
+}
+function markReviewed(phraseId){
+  const sp=state.saved.find(p=>p.phraseId===phraseId); if(!sp) return;
+  const steps={new:2, learning:5, review:12}; // días (repaso espaciado simple)
+  sp.reviewState = sp.reviewState==='new'?'learning': sp.reviewState==='learning'?'review':'review';
+  sp.nextReview=new Date(Date.now()+ (steps[sp.reviewState]||3)*86400000).toISOString();
+  persist(); toast('Repaso registrado','check','good'); render();
+}
+function renderPhrases(){
+  return header('Frases','Tu banco personal de frases')+`
+  <div class="px-5 space-y-3 fade-in">
+    ${state.saved.length===0?`
+    <div class="text-center py-16">
+      <i data-lucide="bookmark" class="w-10 h-10 text-ink-200 mx-auto mb-3"></i>
+      <p class="font-semibold text-sm">Todavía no guardaste frases</p>
+      <p class="text-xs text-ink-400 mt-1">Durante una sesión, tocá el ícono de guardar en cualquier frase útil.</p>
+    </div>`:
+    state.saved.map(sp=>{
+      const f=findPhrase(sp.phraseId); if(!f) return '';
+      const due=new Date(sp.nextReview)<=new Date();
+      return `<div class="bg-white rounded-2xl border border-ink-100 p-4">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1">
+            <p class="font-semibold text-sm leading-snug">${esc(f.phrase.text)}</p>
+            <p class="text-xs text-brand-600 mt-1">${esc(f.phrase.translation)}</p>
+            <p class="text-xs text-ink-400 mt-1.5 leading-relaxed">${esc(f.phrase.explanation)}</p>
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              ${chip('de: '+f.scenario.title,'bg-ink-100 text-ink-500')}
+              ${chip(sp.reviewState==='new'?'nuevo':sp.reviewState==='learning'?'aprendiendo':'en repaso', due?'bg-accent-500/10 text-accent-500':'bg-good-500/10 text-good-500')}
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 shrink-0">
+            ${audioButton(f.phrase.speechText,state.profile.preferredVoice)}
+            <button onclick="toggleSavePhrase('${sp.phraseId}','${sp.scenarioId}')" class="w-9 h-9 rounded-xl bg-ink-50 flex items-center justify-center"><i data-lucide="trash-2" class="w-4 h-4 text-ink-400"></i></button>
+          </div>
+        </div>
+        ${due?`<button onclick="markReviewed('${sp.phraseId}')" class="mt-3 w-full bg-accent-500/10 text-accent-500 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">
+          <i data-lucide="repeat" class="w-3.5 h-3.5"></i> Marcar como repasada</button>`:''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+/* =====================================================================
+   5️⃣ PROGRESS
+   ===================================================================== */
+function renderProgress(){
+  const pr=state.progress;
+  const total=allScenarios().length||1;
+  const pct=Math.round(pr.completed.length/total*100);
+  const m=state.metrics;
+  const mainMetric = m.session_started ? Math.round((m.session_responded||0)/m.session_started*100) : 0;
+  return header('Progreso','Tu actividad y habilidades')+`
+  <div class="px-5 space-y-4 fade-in">
+    <div class="bg-white rounded-3xl border border-ink-100 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <p class="font-semibold text-sm">Escenarios completados</p>
+        <span class="text-xs font-bold text-brand-600">${pr.completed.length}/${total}</span>
+      </div>
+      <div class="h-2.5 bg-ink-100 rounded-full overflow-hidden"><div class="h-full bg-brand-500 rounded-full transition-all" style="width:${pct}%"></div></div>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${[['timer',pr.minutes+' min','practicados'],['zap',pr.activities,'actividades'],['bookmark',state.saved.length,'frases guardadas'],['mic',state.recordings.length,'grabaciones']].map(([i,v,l])=>`
+      <div class="bg-white rounded-2xl border border-ink-100 p-4">
+        <i data-lucide="${i}" class="w-5 h-5 text-brand-500 mb-2"></i>
+        <p class="text-xl font-bold">${v}</p><p class="text-xs text-ink-400">${l}</p>
+      </div>`).join('')}
+    </div>
+    <div class="bg-white rounded-2xl border border-ink-100 p-4">
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-3">Categorías practicadas</p>
+      ${Object.keys(pr.categories).length?Object.entries(pr.categories).map(([c,n])=>`
+        <div class="flex items-center gap-3 py-1.5">
+          <i data-lucide="${catInfo(c).icon}" class="w-4 h-4 text-ink-400"></i>
+          <span class="text-sm flex-1">${catInfo(c).label}</span>
+          <span class="text-xs font-bold text-ink-500">${n} sesión${n>1?'es':''}</span>
+        </div>`).join(''):'<p class="text-sm text-ink-400">Completá tu primera sesión para ver datos.</p>'}
+    </div>
+    <div class="bg-ink-900 text-white rounded-2xl p-4">
+      <p class="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-1">Métrica de validación (interna)</p>
+      <p class="text-sm">Sesiones iniciadas que llegan a la respuesta activa:</p>
+      <p class="text-2xl font-bold mt-1">${mainMetric}%</p>
+      <p class="text-[11px] text-ink-400 mt-2">iniciadas: ${m.session_started||0} · con respuesta: ${m.session_responded||0} · completadas: ${m.session_completed||0} · audios: ${m.audio_played||0}</p>
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   6️⃣ SETTINGS
+   ===================================================================== */
+function renderSettings(){
+  const p=state.profile;
+  const voices=VOICE_PROFILES.filter(v=>v.status==='active');
+  const storageKb=Math.round(JSON.stringify(localStorage).length/1024);
+  const goalLabels={'first-immersion':'Primera inmersión en otro país',work:'Conseguir o mejorar en un trabajo',study:'Estudiar en el extranjero',travel:'Viajar con confianza'};
+  return header('Ajustes','Tu plan, voz y almacenamiento')+`
+  <div class="px-5 space-y-4 fade-in">
+
+    <div class="bg-white rounded-2xl border border-ink-100 divide-y divide-ink-100">
+      <div class="p-4">
+        <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Idiomas</p>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-ink-50 rounded-xl px-3 py-2.5"><p class="text-[10px] text-ink-400">Tu idioma</p><p class="text-sm font-medium">Español</p></div>
+          <div class="bg-ink-50 rounded-xl px-3 py-2.5"><p class="text-[10px] text-ink-400">Aprendés</p><p class="text-sm font-medium">Inglés</p></div>
+        </div>
+      </div>
+      <div class="p-4">
+        <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Plan de aprendizaje</p>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between gap-3"><span class="text-ink-400">Nivel</span><span class="font-medium">${esc(p.level)}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-ink-400">Objetivo</span><span class="font-medium text-right">${esc(goalLabels[p.goal]||p.goal)}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-ink-400">Práctica diaria</span><span class="font-medium">${esc(p.dailyMinutes)} min</span></div>
+          <div class="flex justify-between gap-3"><span class="text-ink-400">Prioridades</span><span class="font-medium text-right">${(p.priorities||[]).map(id=>catInfo(id).label).join(', ')}</span></div>
+        </div>
+      </div>
+      <div class="p-4">
+        <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Voz preferida</p>
+        <select onchange="updateProfile('preferredVoice',this.value)" class="w-full bg-ink-50 rounded-xl px-3 py-2.5 text-sm font-medium">
+          ${voices.map(v=>`<option value="${v.id}" ${p.preferredVoice===v.id?'selected':''}>${v.label}</option>`).join('')}
+        </select>
+        <div class="mt-2 flex items-center gap-2">
+          ${audioButton('Hello! This is how I sound.',state.profile.preferredVoice,{},{
+            size:'w-8 h-8',iconSize:'w-3 h-3',label:'Probar voz'
+          })}
+          <span class="text-xs font-semibold ${state.audio.status==='playing'?'text-bad-500':'text-brand-600'}">${state.audio.status==='loading'?'Preparando voz…':state.audio.status==='playing'?'Detener voz':'Probar voz'}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl border border-ink-100 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide">Paquetes descargados</p>
+        <button onclick="checkUpdates()" class="text-xs font-semibold text-brand-600 flex items-center gap-1"><i data-lucide="refresh-cw" class="w-3 h-3"></i> Buscar actualizaciones</button>
+      </div>
+      ${REMOTE_MANIFEST.packages.map(rm=>{
+        const local=state.packages[rm.id];
+        const compatible=rm.minAppVersion<=CONFIG.APP_VERSION;
+        const outdated=local&&rm.version>local.version;
+        return `<div class="py-3 border-t border-ink-50 first:border-0">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <p class="font-semibold text-sm truncate">${esc(rm.title)}</p>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                ${chip('v'+rm.version)}${chip(rm.sizeMb+' MB')}
+                ${local?chip(outdated?'actualización disponible':'descargado ✓', outdated?'bg-accent-500/10 text-accent-500':'bg-good-500/10 text-good-500'):''}
+                ${!compatible?chip('requiere app v'+rm.minAppVersion,'bg-bad-500/10 text-bad-500'):''}
+              </div>
+            </div>
+            <div class="shrink-0">
+              ${local
+                ? `<button onclick="deletePackage('${rm.id}')" class="w-8 h-8 rounded-lg bg-ink-50 flex items-center justify-center"><i data-lucide="trash-2" class="w-4 h-4 text-ink-400"></i></button>`
+                : compatible
+                  ? `<button onclick="downloadPackage('${rm.id}')" class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center"><i data-lucide="download" class="w-4 h-4 text-brand-600"></i></button>`
+                  : `<i data-lucide="lock" class="w-4 h-4 text-ink-300 mt-2"></i>`}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="bg-white rounded-2xl border border-ink-100 p-4">
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Almacenamiento</p>
+      <p class="text-sm text-ink-500">Uso local aproximado: <b class="text-ink-900">${storageKb} KB</b></p>
+      <button onclick="clearDownloads()" class="mt-3 w-full bg-ink-50 text-ink-700 text-sm font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+        <i data-lucide="eraser" class="w-4 h-4"></i> Eliminar contenido descargado
+      </button>
+      <p class="text-[11px] text-ink-400 mt-2">Se borran paquetes y audios del sistema. Tus grabaciones, frases guardadas, intentos y progreso <b>se conservan</b>.</p>
+    </div>
+
+    <div class="bg-ink-100 rounded-2xl p-4 text-[11px] text-ink-500 leading-relaxed">
+      <p class="font-semibold text-ink-700 mb-1">Immersia · v${CONFIG.APP_VERSION} · LCS ${CONFIG.LCS_SCHEMA_VERSION}</p>
+      <p>Audio: ${CONFIG.DEMO_MODE?'voz del navegador (demo)':'ElevenLabs mediante backend seguro'}</p>
+      <p class="truncate">API: ${CONFIG.API_BASE_URL}</p>
+      <p class="truncate">TTS: ElevenLabs · ${CONFIG.ELEVENLABS_MODEL}</p>
+    </div>
+  </div>`;
+}
+function updateProfile(k,v){
+  state.profile[k]=v;
+  persist(); render();
+}
+function clearDownloads(){
+  state.packages={}; localStorage.removeItem(LS.AUDIO_CACHE); persist();
+  toast('Contenido eliminado. Progreso conservado.','check-circle-2','good'); render();
+}
+
+/* =====================================================================
+   🎬 SESIÓN — Context → Learn → Listen → Understand → Respond → Review
+   ===================================================================== */
+const SESSION_STEPS=['context','learn','listen','understand','respond','review'];
+function startSession(scenarioId){
+  const sc=findScenario(scenarioId);
+  if(!sc){ toast('Escenario no disponible sin conexión','cloud-off','bad'); return; }
+  state.session={ scenarioId, step:0, startedAt:Date.now(), answers:{}, recording:null, transcript:null, writtenResponse:'' };
+  if(!state.progress.started.includes(scenarioId)) state.progress.started.push(scenarioId);
+  track('session_started'); persist(); render();
+}
+function sessionScenario(){ return state.session?findScenario(state.session.scenarioId):null; }
+function sessionNext(){
+  if(!state.session) return;
+  if(state.session.step<SESSION_STEPS.length-1){ state.session.step++; persist(); render(); }
+  else completeSession();
+}
+function sessionBack(){
+  if(!state.session) return;
+  if(state.session.step>0){ state.session.step--; persist(); render(); }
+  else exitSession();
+}
+function exitSession(){
+  stopTTS();
+  if(mediaRecorder){ try{ mediaRecorder.stop(); }catch(e){} mediaRecorder=null; }
+  clearInterval(recTimer);
+  state.session=null; persist(); render();
+}
+function setSessionAnswer(activityId,value){
+  state.session.answers[activityId]=value; persist(); render();
+}
+function submitChoice(activityId){
+  const sc=sessionScenario();
+  const act=sc?.activities?.find(a=>a.id===activityId);
+  const selected=state.session?.answers?.[activityId];
+  if(!act||selected===undefined){ toast('Elegí una opción antes de continuar','circle-alert','accent'); return; }
+  const correct=selected===act.expected;
+  state.session.answers[activityId]={value:selected,correct,submitted:true};
+  state.attempts.push({scenarioId:sc.id,activityId,type:'choice',answer:selected,correct,createdAt:new Date().toISOString()});
+  state.progress.activities++;
+  track('activity_answered'); persist(); render();
+}
+function choiceValue(activityId){
+  const a=state.session?.answers?.[activityId];
+  return a&&typeof a==='object'?a.value:a;
+}
+async function toggleSessionRecording(){
+  if(mediaRecorder){
+    const result=await stopRecording();
+    if(result){
+      state.session.recording=result;
+      state.recordings.push({scenarioId:state.session.scenarioId,dataUrl:result.dataUrl,duration:result.duration,createdAt:new Date().toISOString()});
+      track('recording_created'); persist(); render();
+    }
+    return;
+  }
+  const ok=await startRecording(()=>{
+    const el=$('#rec-time'); if(el) el.textContent=formatSeconds(recSeconds);
+  });
+  if(!ok){ toast('No se pudo acceder al micrófono','mic-off','bad'); return; }
+  render();
+}
+function formatSeconds(n){ return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`; }
+function saveWrittenResponse(v){ state.session.writtenResponse=v; persist(); }
+function markResponded(){
+  if(!state.session) return;
+  const hasRecording=!!state.session.recording;
+  const hasText=!!state.session.writtenResponse?.trim();
+  if(!hasRecording&&!hasText){ toast('Grabá o escribí una respuesta para continuar','mic','accent'); return; }
+  if(!state.session.respondedAt){
+    state.session.respondedAt=Date.now();
+    track('session_responded');
+    state.progress.activities++;
+    state.attempts.push({scenarioId:state.session.scenarioId,activityId:'speaking-response',type:hasRecording?'speaking':'written',answer:hasText?state.session.writtenResponse:'[audio]',correct:null,createdAt:new Date().toISOString()});
+  }
+  persist(); sessionNext();
+}
+function completeSession(){
+  const sc=sessionScenario(); if(!sc){ exitSession(); return; }
+  const elapsed=Math.max(1,Math.round((Date.now()-state.session.startedAt)/60000));
+  if(!state.progress.completed.includes(sc.id)) state.progress.completed.push(sc.id);
+  state.progress.minutes+=elapsed;
+  state.progress.categories[sc.category]=(state.progress.categories[sc.category]||0)+1;
+  track('session_completed');
+  state.session=null; persist();
+  toast('¡Sesión completada!','party-popper','good');
+  state.tab='today'; render();
+}
+function sessionTop(sc,step){
+  const pct=Math.round((state.session.step+1)/SESSION_STEPS.length*100);
+  return `<div class="sticky top-0 z-30 bg-ink-50/95 backdrop-blur border-b border-ink-100">
+    <div class="px-4 pt-4 pb-3 flex items-center gap-3">
+      <button onclick="sessionBack()" class="w-9 h-9 rounded-full bg-white border border-ink-200 flex items-center justify-center shrink-0"><i data-lucide="arrow-left" class="w-4 h-4"></i></button>
+      <div class="flex-1 min-w-0"><p class="text-xs text-ink-400 truncate">${esc(sc.title)}</p><div class="h-1.5 bg-ink-100 rounded-full mt-1.5 overflow-hidden"><div class="h-full bg-brand-500 rounded-full" style="width:${pct}%"></div></div></div>
+      <span class="text-xs font-bold text-ink-400">${state.session.step+1}/${SESSION_STEPS.length}</span>
+    </div>
+  </div>`;
+}
+function primaryButton(label,action,icon='arrow-right',disabled=false){
+  return `<button onclick="${action}" ${disabled?'disabled':''} class="w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2 ${disabled?'bg-ink-100 text-ink-400':'bg-brand-600 text-white hover:bg-brand-700'}">${esc(label)}<i data-lucide="${icon}" class="w-4 h-4"></i></button>`;
+}
+function renderSession(){
+  const sc=sessionScenario();
+  if(!sc){ state.session=null; persist(); return renderToday()+renderNav(); }
+  const step=SESSION_STEPS[state.session.step];
+  let body='';
+  if(step==='context') body=renderSessionContext(sc);
+  if(step==='learn') body=renderSessionLearn(sc);
+  if(step==='listen') body=renderSessionListen(sc);
+  if(step==='understand') body=renderSessionUnderstand(sc);
+  if(step==='respond') body=renderSessionRespond(sc);
+  if(step==='review') body=renderSessionReview(sc);
+  return sessionTop(sc,step)+`<main class="px-5 py-5 fade-in">${body}</main>`;
+}
+function renderSessionContext(sc){
+  const c=catInfo(sc.category);
+  return `<div>
+    <div class="flex gap-1.5 mb-3">${chip(c.label)}${chip(sc.level,'bg-brand-50 text-brand-700')}${chip(sc.estimatedMinutes+' min')}</div>
+    <h2 class="text-2xl font-bold leading-tight">${esc(sc.title)}</h2>
+    <p class="text-sm text-ink-500 mt-3 leading-relaxed">${esc(sc.description)}</p>
+    <div class="bg-white rounded-2xl border border-ink-100 p-4 mt-5">
+      <p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-3">Objetivos</p>
+      <div class="space-y-2">${sc.objectives.map(o=>`<div class="flex gap-2.5"><i data-lucide="check-circle-2" class="w-4 h-4 text-good-500 mt-0.5 shrink-0"></i><p class="text-sm">${esc(o)}</p></div>`).join('')}</div>
+    </div>
+    <div class="mt-6">${primaryButton('Entrar en la situación','sessionNext()','arrow-right')}</div>
+  </div>`;
+}
+function renderSessionLearn(sc){
+  return `<div>
+    <p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Aprender</p>
+    <h2 class="text-xl font-bold mt-1">Frases clave</h2>
+    <p class="text-sm text-ink-500 mt-1 mb-4">Escuchá, entendé y guardá las que quieras practicar después.</p>
+    <div class="space-y-3">${sc.phrases.map(ph=>`<div class="bg-white rounded-2xl border border-ink-100 p-4">
+      <div class="flex items-start gap-3"><div class="flex-1"><p class="font-semibold text-sm leading-snug">${esc(ph.text)}</p><p class="text-xs text-brand-600 mt-1">${esc(ph.translation)}</p><p class="text-xs text-ink-400 mt-2 leading-relaxed">${esc(ph.explanation)}</p></div>
+      <div class="flex flex-col gap-2">${audioButton(ph.speechText,sc.actors[0]?.voiceRef||state.profile.preferredVoice)}
+      <button onclick="toggleSavePhrase('${ph.id}','${sc.id}')" class="w-9 h-9 rounded-xl ${isPhraseSaved(ph.id)?'bg-brand-600 text-white':'bg-ink-50 text-ink-400'} flex items-center justify-center"><i data-lucide="bookmark" class="w-4 h-4"></i></button></div></div>
+    </div>`).join('')}</div>
+    <div class="mt-6">${primaryButton('Continuar','sessionNext()')}</div>
+  </div>`;
+}
+function renderSessionListen(sc){
+  return `<div>
+    <p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Escuchar</p>
+    <h2 class="text-xl font-bold mt-1">Escuchá la conversación</h2>
+    <p class="text-sm text-ink-500 mt-1 mb-4">Reproducí cada intervención. Podés usar velocidad lenta.</p>
+    <div class="space-y-3">${sc.dialogue.sort((a,b)=>a.sortOrder-b.sortOrder).map((dl,i)=>{
+      const actor=sc.actors.find(a=>a.id===dl.actorId)||{name:'Hablante',voiceRef:state.profile.preferredVoice};
+      return `<div class="bg-white rounded-2xl border border-ink-100 p-4"><div class="flex items-center justify-between gap-2"><p class="text-xs font-bold text-brand-600">${esc(actor.name)}</p><div class="flex gap-2">${audioButton(dl.speechText,actor.voiceRef,{slow:true},{size:'w-8 h-8',icon:'turtle',idleClass:'bg-ink-50 text-ink-500 hover:bg-ink-100',label:'Reproducir lentamente'})}${audioButton(dl.speechText,actor.voiceRef,{},{size:'w-8 h-8'})}</div></div><p class="text-sm font-medium mt-2 leading-relaxed">${esc(dl.text)}</p><details class="mt-2"><summary class="text-xs text-ink-400 cursor-pointer">Ver traducción</summary><p class="text-xs text-ink-500 mt-1">${esc(dl.translation)}</p>${dl.metadata?.culture?`<p class="text-xs text-accent-500 mt-2">${esc(dl.metadata.culture)}</p>`:''}</details></div>`;
+    }).join('')}</div>
+    <div class="mt-6">${primaryButton('Comprobar comprensión','sessionNext()')}</div>
+  </div>`;
+}
+function renderSessionUnderstand(sc){
+  const act=sc.activities.find(a=>a.type==='choice');
+  if(!act) return `<p class="text-sm text-ink-500">No hay actividad de comprensión.</p><div class="mt-6">${primaryButton('Continuar','sessionNext()')}</div>`;
+  const ans=state.session.answers[act.id]; const selected=choiceValue(act.id); const submitted=ans&&typeof ans==='object'&&ans.submitted;
+  return `<div><p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Comprender</p><h2 class="text-xl font-bold mt-1">${esc(act.instructions)}</h2>
+    <div class="space-y-2 mt-5">${act.content.options.map(opt=>{const sel=selected===opt;let cls=sel?'border-brand-500 ring-2 ring-brand-500/10':'border-ink-100';if(submitted&&sel)cls=ans.correct?'border-good-500 bg-good-500/5':'border-bad-500 bg-bad-500/5';return `<button ${submitted?'disabled':''} onclick='setSessionAnswer(${JSON.stringify(act.id)},${JSON.stringify(opt)})' class="w-full text-left bg-white border-2 ${cls} rounded-2xl p-4 text-sm font-medium flex items-center justify-between"><span>${esc(opt)}</span>${sel?`<i data-lucide="${submitted?(ans.correct?'check-circle-2':'x-circle'):'circle-dot'}" class="w-5 h-5 ${submitted?(ans.correct?'text-good-500':'text-bad-500'):'text-brand-500'}"></i>`:''}</button>`}).join('')}</div>
+    ${submitted?`<div class="mt-4 rounded-2xl p-4 ${ans.correct?'bg-good-500/10 text-good-500':'bg-bad-500/10 text-bad-500'}"><p class="text-sm font-semibold">${esc(ans.correct?act.feedback.correct:act.feedback.incorrect)}</p></div>`:''}
+    <div class="mt-6">${submitted?primaryButton('Continuar','sessionNext()'):primaryButton('Comprobar','submitChoice('+JSON.stringify(act.id)+')','check',selected===undefined)}</div></div>`;
+}
+function renderSessionRespond(sc){
+  const act=sc.activities.find(a=>a.type==='speaking'); const recording=state.session.recording;
+  return `<div><p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Responder</p><h2 class="text-xl font-bold mt-1">Tu turno de hablar</h2><p class="text-sm text-ink-500 mt-2 leading-relaxed">${esc(act?.instructions||'Respondé con tus propias palabras.')}</p>
+    ${act?.content?.prompt?`<div class="bg-ink-900 text-white rounded-2xl p-4 mt-4"><p class="text-xs text-ink-400 mb-1">Te dicen:</p><p class="font-semibold">${esc(act.content.prompt)}</p></div>`:''}
+    <div class="mt-5 bg-white rounded-3xl border border-ink-100 p-5 text-center">
+      <button onclick="toggleSessionRecording()" class="mx-auto w-20 h-20 rounded-full ${mediaRecorder?'bg-bad-500 text-white pulse-rec':'bg-brand-600 text-white'} flex items-center justify-center shadow-lg"><i data-lucide="${mediaRecorder?'square':'mic'}" class="w-8 h-8"></i></button>
+      <p id="rec-time" class="text-lg font-bold mt-3">${mediaRecorder?formatSeconds(recSeconds):recording?formatSeconds(recording.duration):'00:00'}</p><p class="text-xs text-ink-400 mt-1">${mediaRecorder?'Grabando… tocá para detener':recording?'Grabación lista. Podés repetirla.':'Tocá para grabar tu respuesta'}</p>
+      ${recording?`<audio controls src="${recording.dataUrl}" class="w-full mt-4"></audio>`:''}
+    </div>
+    <div class="mt-4"><label class="text-xs font-semibold text-ink-500 uppercase tracking-wide">O escribí tu respuesta</label><textarea oninput="saveWrittenResponse(this.value)" class="mt-2 w-full min-h-24 bg-white border border-ink-200 rounded-2xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Escribí aquí…">${esc(state.session.writtenResponse||'')}</textarea></div>
+    ${act?.content?.hint?`<details class="mt-3"><summary class="text-xs font-semibold text-brand-600 cursor-pointer">Ver una pista</summary><p class="text-xs text-ink-500 bg-brand-50 rounded-xl p-3 mt-2">${esc(act.content.hint)}</p></details>`:''}
+    <div class="mt-6">${primaryButton('Enviar respuesta','markResponded()','send')}</div></div>`;
+}
+function renderSessionReview(sc){
+  const choice=sc.activities.find(a=>a.type==='choice'); const a=choice?state.session.answers[choice.id]:null;
+  return `<div class="text-center"><div class="w-20 h-20 mx-auto rounded-full bg-good-500/10 flex items-center justify-center"><i data-lucide="sparkles" class="w-10 h-10 text-good-500"></i></div><h2 class="text-2xl font-bold mt-5">¡Buen trabajo!</h2><p class="text-sm text-ink-500 mt-2">Completaste la práctica activa de esta situación.</p>
+    <div class="grid grid-cols-2 gap-3 mt-6 text-left"><div class="bg-white rounded-2xl border border-ink-100 p-4"><i data-lucide="message-circle" class="w-5 h-5 text-brand-500 mb-2"></i><p class="font-bold text-lg">${sc.phrases.length}</p><p class="text-xs text-ink-400">frases vistas</p></div><div class="bg-white rounded-2xl border border-ink-100 p-4"><i data-lucide="brain" class="w-5 h-5 text-brand-500 mb-2"></i><p class="font-bold text-lg">${a?.correct?'✓':'—'}</p><p class="text-xs text-ink-400">comprensión</p></div></div>
+    <div class="bg-white rounded-2xl border border-ink-100 p-4 mt-4 text-left"><p class="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Recordatorio cultural</p><p class="text-sm text-ink-600">Hablar, pedir repetición y confirmar lo entendido vale más que buscar una respuesta perfecta.</p></div>
+    <div class="mt-6">${primaryButton('Completar sesión','completeSession()','check')}</div></div>`;
+}
+
+/* =====================================================================
+   🌐 ESTADO DE RED + ARRANQUE
+   ===================================================================== */
+window.addEventListener('online',()=>{ state.online=true; toast('Conexión restablecida','wifi','good'); render(); });
+window.addEventListener('offline',()=>{ state.online=false; toast('Modo sin conexión activo','wifi-off','accent'); render(); });
+window.addEventListener('beforeunload',persist);
+if('speechSynthesis' in window) speechSynthesis.getVoices();
+render();
+</script>
+</body>
+</html>
