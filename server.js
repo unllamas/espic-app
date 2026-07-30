@@ -60,13 +60,6 @@ export async function handleTts(req, res) {
       json(res, 400, { error: 'Voz no permitida.' });
       return;
     }
-    if (!voiceId) {
-      json(res, 503, {
-        error: `Falta configurar ELEVENLABS_${voiceKey.toUpperCase()}_VOICE_ID en el archivo .env.`,
-      });
-      return;
-    }
-
     const outputFormat = body.outputFormat || 'mp3_44100_128';
     const elevenResponse = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${encodeURIComponent(outputFormat)}`,
