@@ -5,8 +5,9 @@ import { pathToFileURL } from 'node:url';
 
 const PORT = Number(process.env.PORT || 3000);
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_GIRL_VOICE_ID = '';
-const ELEVENLABS_BOY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB';
+// Voces premade de ElevenLabs verificadas con la cuenta del proyecto.
+const ELEVENLABS_GIRL_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'; // Sarah
+const ELEVENLABS_BOY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB';  // Adam
 const ROOT = new URL('.', import.meta.url).pathname;
 const VOICES = {
   girl: ELEVENLABS_GIRL_VOICE_ID,
